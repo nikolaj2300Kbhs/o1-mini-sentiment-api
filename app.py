@@ -43,25 +43,38 @@ def predict_box_score(historical_data, future_box_info):
         # Initialize Gemini 2.0 Flash model
         model = genai.GenerativeModel('gemini-2.0-flash')
         
-        # Generate response
-        response = model.generate_content(prompt)
-        score = response.text.strip()
+        # Run 5 times and average the scores
+        scores = []
+        for _ in range(5):
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0  # Set temperature to 0 for determinism
+                )
+            )
+            score = response.text.strip()
+            logger.info(f"Run response: '{score}'")
+            if not score:
+                logger.error("Model returned an empty response in one run")
+                raise ValueError("Model returned an empty response in one run")
+            try:
+                score_float = float(score)
+                if not (1 <= score_float <= 5):
+                    raise ValueError("Score out of range")
+                scores.append(score_float)
+            except ValueError as e:
+                logger.error(f"Invalid score format received in run: '{score}', error: {str(e)}")
+                raise ValueError(f"Invalid score format received in run: '{score}'")
         
-        logger.info(f"Raw model response: '{score}'")
-        if not score:
-            logger.error("Model returned an empty response")
-            raise ValueError("Model returned an empty response")
+        if not scores:
+            logger.error("No valid scores collected from runs")
+            raise ValueError("No valid scores collected from runs")
         
-        try:
-            score_float = float(score)
-            if not (1 <= score_float <= 5):
-                raise ValueError("Score out of range")
-            score = f"{score_float:.2f}"
-        except ValueError as e:
-            logger.error(f"Invalid score format received: '{score}', error: {str(e)}")
-            raise ValueError(f"Invalid score format received: '{score}'")
-        
-        return score
+        # Calculate average score
+        avg_score = sum(scores) / len(scores)
+        final_score = f"{avg_score:.2f}"
+        logger.info(f"Averaged score from 5 runs: '{final_score}'")
+        return final_score
     except Exception as e:
         logger.error(f"Error in box score simulation: {str(e)}")
         raise Exception(f"Error in box score simulation: {str(e)}")

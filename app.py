@@ -20,7 +20,7 @@ def predict_box_score(historical_data, future_box_info):
         response = client.chat.completions.create(
             model="o1-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=50
+            max_completion_tokens=100
         )
         score = response.choices[0].message.content.strip()
         logger.info(f"Raw model response: '{score}'")

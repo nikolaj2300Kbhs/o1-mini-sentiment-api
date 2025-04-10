@@ -1,93 +1,119 @@
-from flask import Flask, request, jsonify
-import google.generativeai as genai
+from google.colab import drive
+drive.mount('/content/drive')
+
+import pandas as pd
+import requests
+import time
 import os
-from dotenv import load_dotenv
-import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Folder path
+input_folder = '/content/drive/My Drive/Chat GPT 4o files Jan to Oct 2024'
 
-# Load environment variables
-load_dotenv()
+# Debug: List files in the folder to confirm
+print("Files in folder:")
+for file in os.listdir(input_folder):
+    print(file)
 
-# Initialize Flask app
-app = Flask(__name__)
+# Load historical files
+box_ratings = pd.read_excel(f'{input_folder}/Total box rating Jan-Oct24.xlsx')
+product_info = pd.read_excel(f'{input_folder}/Product Information total.xlsx')
+product_info_alt = pd.read_excel(f'{input_folder}/Product information Jan to October 2024 incl. product description (2).xlsx')
+brand_avg = pd.read_excel(f'{input_folder}/brand average review (1).xlsx')
+category_avg = pd.read_excel(f'{input_folder}/Category rating (1).xlsx')
+box_content = pd.read_excel(f'{input_folder}/Box content Classic Jan-October 2024 (1).xlsx')
 
-# Initialize Gemini client
-genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+# Debug: Print column names before renaming
+print("\nbox_ratings columns before renaming:", box_ratings.columns.tolist())
+print("box_content columns before renaming:", box_content.columns.tolist())
+print("product_info columns before renaming:", product_info.columns.tolist())
+print("brand_avg columns before renaming:", brand_avg.columns.tolist())
+print("category_avg columns before renaming:", category_avg.columns.tolist())
 
-def predict_box_score(historical_data, future_box_info):
-    """Simulate a 1–5 satisfaction score (with two decimal places) for a future box using historical data."""
-    try:
-        prompt = f"""You are a Goodiebox satisfaction expert simulating a member satisfaction score for a future subscription box. Use this data context:
+# Debug: Print a sample of the new data in box_content
+print("\nSample of box_content (first 5 rows):")
+print(box_content.head())
 
-        **Data Explanation**:
-        - Historical Data: Past boxes with details like:
-          - Box SKU: Unique box identifier (e.g., DK-2504-CLA-2L).
-          - Products: Number of items, listed as Product SKUs (e.g., SKU123).
-          - Total Retail Value: Sum of product retail prices in €.
-          - Unique Categories: Number of distinct product categories (e.g., skincare, makeup).
-          - Full-size/Premium: Counts of full-size items and those >€20.
-          - Total Weight: Sum of product weights in grams.
-          - Avg Brand/Category Ratings: Average ratings (out of 5) for brands and categories.
-          - Historical Score: Past average box rating (out of 5, with two decimal places, e.g., 4.23).
-        - Future Box Info: Details of a new box (same format, no historical score yet).
+# Standardize column names
+box_ratings.rename(columns={'Box sku': 'box_sku', 'average rating': 'average_box_score'}, inplace=True)
+box_content.rename(columns={'Box sku': 'box_sku'}, inplace=True)
+product_info.rename(columns={'SKU': 'product_sku'}, inplace=True)
+product_info_alt.rename(columns={'SKU': 'product_sku'}, inplace=True)
+brand_avg.rename(columns={'brand': 'Brand', 'Average rating': 'brand_avg_rating'}, inplace=True)
+category_avg.rename(columns={'Average rating': 'category_avg_rating'}, inplace=True)
 
-        **Inputs**:
-        Historical Data (past boxes): {historical_data}
-        Future Box Info: {future_box_info}
+# Debug: Print column names after renaming
+print("\nbox_ratings columns after renaming:", box_ratings.columns.tolist())
+print("box_content columns after renaming:", box_content.columns.tolist())
+print("product_info columns after renaming:", product_info.columns.tolist())
+print("brand_avg columns after renaming:", brand_avg.columns.tolist())
+print("category_avg columns after renaming:", category_avg.columns.tolist())
 
-        Simulate the score by analyzing trends in past member reactions, product variety, retail value, brand reputation, category ratings, and surprise value. Return a satisfaction score on a 1–5 scale (matching the historical scores), with exactly two decimal places (e.g., 4.23). Return only the numerical score (e.g., 4.23)."""
-        
-        # Initialize Gemini 2.0 Flash model
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        
-        # Generate response
-        response = model.generate_content(prompt)
-        score = response.text.strip()
-        
-        logger.info(f"Raw model response: '{score}'")
-        if not score:
-            logger.error("Model returned an empty response")
-            raise ValueError("Model returned an empty response")
-        
-        try:
-            score_float = float(score)
-            if not (1 <= score_float <= 5):
-                raise ValueError("Score out of range")
-            score = f"{score_float:.2f}"
-        except ValueError as e:
-            logger.error(f"Invalid score format received: '{score}', error: {str(e)}")
-            raise ValueError(f"Invalid score format received: '{score}'")
-        
-        return score
-    except Exception as e:
-        logger.error(f"Error in box score simulation: {str(e)}")
-        raise Exception(f"Error in box score simulation: {str(e)}")
+# Merge historical data
+merged_data = pd.merge(box_ratings, box_content, on='box_sku', how='left')
+merged_data = pd.merge(merged_data, product_info, on='product_sku', how='left')
+merged_data = pd.merge(merged_data, product_info_alt, on='product_sku', how='left', suffixes=('', '_alt'))
+merged_data = pd.merge(merged_data, brand_avg, on='Brand', how='left')
+merged_data = pd.merge(merged_data, category_avg, on='Category', how='left')
 
-@app.route('/predict_box_score', methods=['POST'])
-def box_score():
-    """Endpoint for simulating future box scores."""
-    try:
-        data = request.get_json()
-        if not data or 'future_box_info' not in data:
-            logger.warning("Missing future box info in request")
-            return jsonify({'error': 'Missing future box info'}), 400
-        historical_data = data.get('historical_data', 'No historical data provided')
-        future_box_info = data['future_box_info']
-        score = predict_box_score(historical_data, future_box_info)
-        return jsonify({'predicted_box_score': score})
-    except Exception as e:
-        logger.error(f"Error in /predict_box_score endpoint: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+# Debug: Print merged_data columns before calculating global averages
+print("\nmerged_data columns:", merged_data.columns.tolist())
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint."""
-    return jsonify({'status': 'healthy'})
+# Fill missing ratings
+global_brand_avg = 4.07
+global_category_avg = category_avg['category_avg_rating'].mean()
+merged_data['brand_avg_rating'] = merged_data['brand_avg_rating'].fillna(global_brand_avg)
+merged_data['category_avg_rating'] = merged_data['category_avg_rating'].fillna(global_category_avg)
 
-if __name__ == '__main__':
-    if not os.getenv('GOOGLE_API_KEY'):
-        raise ValueError("GOOGLE_API_KEY environment variable is not set")
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+# Summarize historical data
+historical_summary = []
+for box_sku, group in merged_data.groupby('box_sku'):
+    summary = (f"Box {box_sku}: {len(group)} products, Total Retail Value: €{group['Retail price €'].sum():.2f}, "
+               f"Unique Categories: {group['Category'].nunique()}, Full-size: {(group['Size_category'] == 'Full size').sum()}, "
+               f"Premium (>€20): {(group['Retail price €'] > 20).sum()}, Total Weight: {group['Weight'].sum():.2f}g, "
+               f"Avg Brand Rating: {group['brand_avg_rating'].mean():.2f}, Avg Category Rating: {group['category_avg_rating'].mean():.2f}, "
+               f"Historical Score: {group['average_box_score'].iloc[0] if pd.notna(group['average_box_score'].iloc[0]) else 'None'}")
+    historical_summary.append(summary)
+historical_data = '; '.join(historical_summary)
+
+# Load future box data from Google Sheet (exported as .xlsx)
+future_box_data = pd.read_excel(f'{input_folder}/New Box Data.xlsx')
+
+# Standardize future box column names to match historical data
+future_box_data.rename(columns={
+    'Box sku': 'box_sku',
+    'product SKU': 'product_sku',
+    'Retail Price (€)': 'Retail price €',
+    'Product size': 'Size_category'
+}, inplace=True)
+
+# Extract future box info
+future_box_sku = future_box_data['box_sku'].iloc[0]
+future_products = future_box_data['product_sku'].tolist()
+future_box_info = (f"Future Box {future_box_sku}: {len(future_products)} products, "
+                   f"Total Retail Value: €{future_box_data['Retail price €'].sum():.2f}, "
+                   f"Unique Categories: {future_box_data['Category'].nunique()}, "
+                   f"Full-size: {(future_box_data['Size_category'] == 'Full size').sum()}, "
+                   f"Premium (>€20): {(future_box_data['Retail price €'] > 20).sum()}, "
+                   f"Total Weight: {future_box_data['weight'].sum():.2f}g")
+
+# API URL for Gemini 2.0 Flash
+url = 'https://gemini-sentiment-api.onrender.com/predict_box_score'  # Replace with your actual Render URL
+
+# Predict future box score
+try:
+    response = requests.post(url, json={'historical_data': historical_data, 'future_box_info': future_box_info})
+    print("HTTP Status Code:", response.status_code)
+    print("Raw API response:", response.text)
+    result = response.json()
+    print("Parsed API response:", result)
+    predicted_score = result['predicted_box_score']
+    print(f"{future_box_sku}: Gemini 2.0 Flash Predicted Score {predicted_score}")
+except Exception as e:
+    print(f"Error predicting future box with Gemini 2.0 Flash: {e}")
+    raise Exception("API call failed—cannot proceed without predicted_score")
+
+# Save result
+results = [{'box_sku': future_box_sku, 'gemini_2_0_flash_predicted_box_score': predicted_score}]
+results_df = pd.DataFrame(results)
+results_df.to_csv(f'{input_folder}/gemini_2_0_flash_future_box_scores.csv', index=False)
+print(f"Done—Gemini 2.0 Flash results saved to {input_folder}/gemini_2_0_flash_future_box_scores.csv!")
